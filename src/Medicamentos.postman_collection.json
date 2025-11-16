@@ -1,0 +1,83 @@
+{
+  "info": {
+    "_postman_id": "cba4ff3f-ffb3-4c5a-91a1-3d8d7f12b5a2",
+    "name": "Farmacia FamilyCare - Medicamentos API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Obtener todos los medicamentos",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:4000/api/medicamentos",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "4000",
+          "path": ["api", "medicamentos"]
+        }
+      }
+    },
+    {
+      "name": "Crear nuevo medicamento",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"nombre\": \"Paracetamol 500mg\",\n  \"descripcion\": \"Analgésico y antipirético\",\n  \"precio\": 45.50,\n  \"stock\": 100,\n  \"fecha_caducidad\": \"2026-01-01\"\n}"
+        },
+        "url": {
+          "raw": "http://localhost:4000/api/medicamentos",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "4000",
+          "path": ["api", "medicamentos"]
+        }
+      }
+    },
+    {
+      "name": "Actualizar medicamento (ID = 1)",
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"precio\": 50.00,\n  \"stock\": 120\n}"
+        },
+        "url": {
+          "raw": "http://localhost:4000/api/medicamentos/1",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "4000",
+          "path": ["api", "medicamentos", "1"]
+        }
+      }
+    },
+    {
+      "name": "Eliminar medicamento (ID = 1)",
+      "request": {
+        "method": "DELETE",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:4000/api/medicamentos/1",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "4000",
+          "path": ["api", "medicamentos", "1"]
+        }
+      }
+    }
+  ]
+}
