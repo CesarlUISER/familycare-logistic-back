@@ -1,10 +1,19 @@
-// backend/src/routes/reporteRoutes.js
 import express from "express";
-import { reporteMensual, stockActual } from "../controllers/reporteController.js";
+import {
+  reporteMensual,
+  stockActual,
+  expirations
+} from "../controllers/reporteController.js";
 
 const router = express.Router();
 
-router.get("/mensual", reporteMensual);
+// Inventario actual
 router.get("/stock", stockActual);
+
+// Próximos a caducar
+router.get("/expirations", expirations);
+
+// Reporte mensual
+router.get("/mensual", reporteMensual);
 
 export default router;

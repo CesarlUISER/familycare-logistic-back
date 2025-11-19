@@ -2,6 +2,8 @@
 import { Op, fn, col, literal } from "sequelize";
 import Medicamento from "../models/Medicamento.js";
 import MovimientoStock from "../models/MovimientoStock.js";
+import Lote from "../models/Lote.js";
+
 
 // Utilidad: rango del mes (YYYY-MM)
 function rangoMes(yyyyMm) {
@@ -42,8 +44,7 @@ export const reporteMensual = async (req, res) => {
       if (med) perdidaTotal += (mov.cantidad || 0) * Number(med.precio || 0);
     }
 
-    // 3) Top 5 por cantidad de movimientos (versión a prueba de ONLY_FULL_GROUP_BY)
-    //    Paso 1: agrupar y contar por medicamento_id
+    // 3) Top 5 por cantidad de movimientos
     const topIds = await MovimientoStock.findAll({
       attributes: [
         "medicamento_id",
@@ -56,7 +57,6 @@ export const reporteMensual = async (req, res) => {
       raw: true,
     });
 
-    //    Paso 2: traer nombres de medicamentos y armar resultado final
     let top = [];
     if (topIds.length) {
       const ids = topIds.map((r) => r.medicamento_id);
@@ -86,6 +86,7 @@ export const reporteMensual = async (req, res) => {
       order: [["fecha_caducidad", "ASC"]],
     });
 
+    // Dejamos este tal cual (la pantalla de Reportes usará este objeto)
     res.json({
       mes,
       resumen: {
@@ -106,7 +107,7 @@ export const reporteMensual = async (req, res) => {
 };
 
 /** =========================
- *  INVENTARIO ACTUAL (listado + totales)
+ *  INVENTARIO ACTUAL
  *  ========================= */
 export const stockActual = async (req, res) => {
   try {
@@ -136,36 +137,85 @@ export const stockActual = async (req, res) => {
     const pageN = Math.max(1, Number(page));
     const limitN = Math.max(1, Number(limit));
     const offset = (pageN - 1) * limitN;
-    const sortCol = ["id", "nombre", "stock", "precio", "fecha_caducidad", "codigo_barras"].includes(sort)
+    const sortCol = [
+      "id",
+      "nombre",
+      "stock",
+      "precio",
+      "fecha_caducidad",
+      "codigo_barras",
+    ].includes(sort)
       ? sort
       : "nombre";
     const ord = String(order).toUpperCase() === "DESC" ? "DESC" : "ASC";
 
-    const { rows, count } = await Medicamento.findAndCountAll({
+    const { rows } = await Medicamento.findAndCountAll({
       where,
       limit: limitN,
       offset,
       order: [[sortCol, ord]],
-      attributes: ["id", "nombre", "codigo_barras", "stock", "precio", "fecha_caducidad"],
+      attributes: [
+        "id",
+        "nombre",
+        "codigo_barras",
+        "stock",
+        "precio",
+        "fecha_caducidad",
+      ],
       raw: true,
     });
 
-    const all = await Medicamento.findAll({ where, attributes: ["stock", "precio"], raw: true });
-    const items = count;
-    const units = all.reduce((a, m) => a + (m.stock || 0), 0);
-    const value = all.reduce((a, m) => a + (m.stock || 0) * Number(m.precio || 0), 0);
-
-    res.json({
-      page: pageN,
-      limit: limitN,
-      total: count,
-      items,
-      units,
-      value,
-      data: rows,
-    });
+    // 🔹 Respuesta simplificada a lo que el front espera:
+    // { data: [...] }
+    res.json({ data: rows });
   } catch (e) {
     console.error("❌ Error en stockActual:", e);
     res.status(500).json({ error: "Error al obtener el inventario actual" });
+  }
+};
+
+// =========================
+//  CADUCIDADES (por lotes)
+// =========================
+export const expirations = async (req, res) => {
+  try {
+    // hoy -> hoy + 60 días
+    const hoy = new Date();
+    const limite = new Date();
+    limite.setDate(limite.getDate() + 60);
+
+    const lotes = await Lote.findAll({
+      where: {
+        caducidad: { [Op.between]: [hoy, limite] },
+        stock: { [Op.gt]: 0 },
+      },
+      include: [
+        {
+          model: Medicamento,
+          as: "medicamento",
+          attributes: ["id", "nombre", "codigo_barras"],
+        },
+      ],
+      order: [
+        ["caducidad", "ASC"],
+        ["id", "ASC"],
+      ],
+    });
+
+    const data = lotes.map((l) => ({
+      medicamento_id: l.medicamento_id,
+      medicamento_nombre: l.medicamento?.nombre || "",
+      codigo_barras: l.medicamento?.codigo_barras || "",
+      lote_codigo: l.codigo,
+      fecha_caducidad: l.caducidad,
+      stock: l.stock || 0,
+    }));
+
+    return res.json({ ok: true, data });
+  } catch (e) {
+    console.error("❌ Error en expirations:", e);
+    return res
+      .status(500)
+      .json({ ok: false, error: "Error al obtener próximos a caducar" });
   }
 };

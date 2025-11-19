@@ -353,18 +353,78 @@ export const registrarEntradaConCaducidad = async (req, res) => {
   }
 };
 
-/**
- * GET /api/movimientos?medicamento_id=2
- * Lista movimientos (puede filtrar por medicamento_id)
- */
+// al inicio del archivo ya debes tener:
+// import { Op } from "sequelize";
+// import MovimientoStock from "../models/MovimientoStock.js";
+// import Medicamento from "../models/Medicamento.js";
+// import Lote from "../models/Lote.js";
+
+function normalizarTipo(tipoRaw) {
+  if (!tipoRaw) return null;
+  const t = String(tipoRaw).toLowerCase();
+
+  if (t === "entrada" || t === "entradas") return "entrada";
+  if (t === "salida" || t === "salidas") return "salida";
+
+  // "todos" u otra cosa => sin filtro
+  return null;
+}
+
+function parseFecha(fechaRaw, finDelDia = false) {
+  if (!fechaRaw) return null;
+
+  const str = String(fechaRaw).trim();
+
+  // Formato ISO: 2025-11-19
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+    const d = new Date(str + "T00:00:00");
+    if (finDelDia) d.setHours(23, 59, 59, 999);
+    return d;
+  }
+
+  // Formato dd/mm/yyyy: 19/11/2025
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(str)) {
+    const [dd, mm, yyyy] = str.split("/");
+    const d = new Date(`${yyyy}-${mm}-${dd}T00:00:00`);
+    if (finDelDia) d.setHours(23, 59, 59, 999);
+    return d;
+  }
+
+  // Último intento: lo que entienda Date()
+  const t = Date.parse(str);
+  if (!Number.isNaN(t)) {
+    const d = new Date(t);
+    if (finDelDia) d.setHours(23, 59, 59, 999);
+    return d;
+  }
+
+  return null;
+}
+
 export const listarMovimientos = async (req, res) => {
   try {
-    const where = {};
-    if (req.query.medicamento_id) where.medicamento_id = req.query.medicamento_id;
+    const { tipo: tipoRaw, desde, hasta } = req.query;
 
-    const rows = await MovimientoStock.findAll({
+    const where = {};
+
+    // 🔹 Tipo de movimiento (entrada / salida / todos)
+    const tipo = normalizarTipo(tipoRaw);
+    if (tipo) {
+      where.tipo = tipo; // "entrada" o "salida"
+    }
+
+    // 🔹 Filtro por rango de fechas en created_at
+    const fechaDesde = parseFecha(desde, false);
+    const fechaHasta = parseFecha(hasta, true);
+
+    if (fechaDesde || fechaHasta) {
+      where.created_at = {};
+      if (fechaDesde) where.created_at[Op.gte] = fechaDesde;
+      if (fechaHasta) where.created_at[Op.lte] = fechaHasta;
+    }
+
+    const movimientos = await MovimientoStock.findAll({
       where,
-      order: [["created_at", "DESC"]],
       include: [
         {
           model: Medicamento,
@@ -372,17 +432,20 @@ export const listarMovimientos = async (req, res) => {
           attributes: ["id", "nombre", "codigo_barras"],
         },
         {
-          model: Lote,  // Incluimos Lote
-          as: "lote",   // Alias en la relación
-          attributes: ["id", "codigo", "caducidad", "stock_lote"],  // Campos relevantes
-        }
+          model: Lote,
+          as: "lote",
+          attributes: ["id", "codigo", "caducidad"], // 👈 OJO: ya NO pedimos stock_lote
+        },
       ],
-      limit: 50,
+      order: [["created_at", "DESC"]],
+      limit: 200,
     });
 
-    return res.json(rows);
-  } catch (e) {
-    console.error("❌ Error al listar movimientos:", e);
-    return res.status(500).json({ error: "Error al obtener movimientos" });
+    res.json({ ok: true, data: movimientos });
+  } catch (err) {
+    console.error("❌ Error al listar movimientos:", err);
+    res
+      .status(500)
+      .json({ ok: false, error: "Error al obtener los movimientos" });
   }
 };
