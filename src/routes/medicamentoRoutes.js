@@ -10,6 +10,7 @@ import {
   ajustarStock,
   alertasMedicamentos,
   eliminarMedicamento,
+  reactivarMedicamento,
 } from "../controllers/medicamentoController.js";
 
 const router = express.Router();
@@ -40,5 +41,8 @@ router.patch("/:id/ajustar-stock", ajustarStock);
 
 // 🗑️ Eliminar un medicamento
 router.delete("/:id", eliminarMedicamento);
+
+// activar un medicamento 
+router.patch("/:id/reactivar", reactivarMedicamento);
 
 export default router;

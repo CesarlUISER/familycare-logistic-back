@@ -4,7 +4,6 @@ import Medicamento from "../models/Medicamento.js";
 import MovimientoStock from "../models/MovimientoStock.js";
 import Lote from "../models/Lote.js";
 
-
 // Utilidad: rango del mes (YYYY-MM)
 function rangoMes(yyyyMm) {
   const [year, month] = String(yyyyMm).split("-").map(Number);
@@ -76,7 +75,7 @@ export const reporteMensual = async (req, res) => {
       }));
     }
 
-    // 4) Próximos a caducar (30 días)
+    // 4) Próximos a caducar (30 días) - este se usa solo en Reporte mensual
     const hoy = new Date();
     const limite = new Date();
     limite.setDate(limite.getDate() + 30);
@@ -86,7 +85,6 @@ export const reporteMensual = async (req, res) => {
       order: [["fecha_caducidad", "ASC"]],
     });
 
-    // Dejamos este tal cual (la pantalla de Reportes usará este objeto)
     res.json({
       mes,
       resumen: {
@@ -157,16 +155,16 @@ export const stockActual = async (req, res) => {
       attributes: [
         "id",
         "nombre",
+        "descripcion",
         "codigo_barras",
         "stock",
         "precio",
         "fecha_caducidad",
+        "activo",
       ],
       raw: true,
     });
 
-    // 🔹 Respuesta simplificada a lo que el front espera:
-    // { data: [...] }
     res.json({ data: rows });
   } catch (e) {
     console.error("❌ Error en stockActual:", e);
@@ -174,19 +172,21 @@ export const stockActual = async (req, res) => {
   }
 };
 
-// =========================
-//  CADUCIDADES (por lotes)
-// =========================
+/** =========================
+ *  CADUCIDADES (pantalla aparte)
+ *  =========================
+ *  - Toma LOTES con caducidad futura y stock > 0
+ *  - Además, toma MEDICAMENTOS que tengan fecha_caducidad y stock > 0
+ *    y que no tengan lotes (datos antiguos).
+ */
 export const expirations = async (req, res) => {
   try {
-    // hoy -> hoy + 60 días
     const hoy = new Date();
-    const limite = new Date();
-    limite.setDate(limite.getDate() + 60);
 
+    // 1) Lotes con caducidad futura y stock > 0
     const lotes = await Lote.findAll({
       where: {
-        caducidad: { [Op.between]: [hoy, limite] },
+        caducidad: { [Op.gte]: hoy },
         stock: { [Op.gt]: 0 },
       },
       include: [
@@ -202,7 +202,7 @@ export const expirations = async (req, res) => {
       ],
     });
 
-    const data = lotes.map((l) => ({
+    const fromLotes = lotes.map((l) => ({
       medicamento_id: l.medicamento_id,
       medicamento_nombre: l.medicamento?.nombre || "",
       codigo_barras: l.medicamento?.codigo_barras || "",
@@ -210,6 +210,36 @@ export const expirations = async (req, res) => {
       fecha_caducidad: l.caducidad,
       stock: l.stock || 0,
     }));
+
+    // 2) Medicamentos con fecha_caducidad y stock>0 pero sin lotes (datos viejos)
+    const idsConLote = new Set(lotes.map((l) => l.medicamento_id));
+
+    const meds = await Medicamento.findAll({
+      where: {
+        fecha_caducidad: { [Op.gte]: hoy },
+        stock: { [Op.gt]: 0 },
+      },
+      attributes: ["id", "nombre", "codigo_barras", "fecha_caducidad", "stock"],
+      raw: true,
+    });
+
+    const fromMeds = meds
+      .filter((m) => !idsConLote.has(m.id))
+      .map((m) => ({
+        medicamento_id: m.id,
+        medicamento_nombre: m.nombre,
+        codigo_barras: m.codigo_barras || "",
+        lote_codigo: null,
+        fecha_caducidad: m.fecha_caducidad,
+        stock: m.stock || 0,
+      }));
+
+    // 3) Unimos y ordenamos por fecha de caducidad
+    const data = [...fromLotes, ...fromMeds].sort((a, b) => {
+      const da = a.fecha_caducidad ? new Date(a.fecha_caducidad).getTime() : 0;
+      const db = b.fecha_caducidad ? new Date(b.fecha_caducidad).getTime() : 0;
+      return da - db;
+    });
 
     return res.json({ ok: true, data });
   } catch (e) {

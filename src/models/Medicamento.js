@@ -45,6 +45,13 @@ const Medicamento = sequelize.define('Medicamento', {
       key: 'id',
     },
   },
+
+  // 🔹 NUEVO: activo / inactivo
+  activo: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: true,
+  },
 }, {
   tableName: 'medicamentos',
   timestamps: false,
@@ -53,7 +60,7 @@ const Medicamento = sequelize.define('Medicamento', {
   ],
 });
 
-// 🔹 Asociación con Lote (ya la tenías)
+// 🔹 Asociación con Lote
 Medicamento.hasMany(Lote, {
   foreignKey: 'medicamento_id',
   as: 'lotes',
@@ -64,10 +71,10 @@ Lote.belongsTo(Medicamento, {
   as: 'medicamento',
 });
 
-// 🔹 Asociación con Categoria (IMPORTANTE)
+// 🔹 Asociación con Categoria
 Medicamento.belongsTo(Categoria, {
   foreignKey: 'categoria_id',
-  as: 'categoria',   // 👈 este alias lo usaremos en los include
+  as: 'categoria',
 });
 
 export default Medicamento;

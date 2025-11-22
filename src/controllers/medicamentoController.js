@@ -129,29 +129,36 @@ export const crearMedicamento = async (req, res) => {
       stock,
       fecha_caducidad,
       categoria_id,
-      codigo_barras,     // 👈 ahora aceptamos código de barras
+      codigo_barras, // 👈 viene del formulario de “nuevo medicamento”
     } = req.body;
+
+    // Validación básica
+    if (!nombre) {
+      return res.status(400).json({ error: "El nombre es obligatorio" });
+    }
 
     const nuevoMedicamento = await Medicamento.create({
       nombre,
-      descripcion,
-      precio,
-      stock,
-      fecha_caducidad,
+      descripcion: descripcion || null,
+      precio: precio ?? 0,               // si no mandas precio, lo dejamos en 0
+      stock: stock ?? 0,                 // stock inicial 0, la entrada lo incrementa
+      fecha_caducidad: fecha_caducidad || null,
       categoria_id: categoria_id ?? null,
       codigo_barras: codigo_barras?.trim() || null,
     });
 
+    // Respondemos con el medicamento creado
     res.status(201).json(nuevoMedicamento);
   } catch (error) {
     // Manejo de índice único de codigo_barras
-    if (error?.name === 'SequelizeUniqueConstraintError') {
-      return res.status(409).json({ error: 'El código de barras ya existe' });
+    if (error?.name === "SequelizeUniqueConstraintError") {
+      return res.status(409).json({ error: "El código de barras ya existe" });
     }
-    console.error('❌ Error al crear medicamento:', error);
-    res.status(500).json({ error: 'Error al crear el medicamento' });
+    console.error("❌ Error al crear medicamento:", error);
+    res.status(500).json({ error: "Error al crear el medicamento" });
   }
 };
+
 
 // Actualizar un medicamento (PUT)
 export const actualizarMedicamento = async (req, res) => {
@@ -279,5 +286,21 @@ export const actualizarCodigoBarras = async (req, res) => {
     }
     console.error("❌ Error al actualizar código de barras:", err);
     res.status(500).json({ error: "Error al actualizar código de barras" });
+  }
+};
+
+// desactivar un medicamento
+// controlador
+export const reactivarMedicamento = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const med = await Medicamento.findByPk(id);
+    if (!med) return res.status(404).json({ error: "Medicamento no encontrado" });
+
+    await med.update({ activo: 1 });
+    res.json({ ok: true, medicamento: med });
+  } catch (err) {
+    console.error("❌ Error al reactivar medicamento:", err);
+    res.status(500).json({ error: "Error al reactivar el medicamento" });
   }
 };
