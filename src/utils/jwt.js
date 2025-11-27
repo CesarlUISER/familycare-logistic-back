@@ -1,8 +1,10 @@
+// backend/src/utils/jwt.js
 import jwt from "jsonwebtoken";
-const { JWT_SECRET = "super_secret_change_me" } = process.env;
 
-export function signToken(payload, opts = {}) {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: "7d", ...opts });
+const JWT_SECRET = process.env.JWT_SECRET || "dev_secret_change_me";
+
+export function signToken(payload, options = {}) {
+  return jwt.sign(payload, JWT_SECRET, options);
 }
 
 export function verifyToken(token) {

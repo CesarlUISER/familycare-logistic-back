@@ -5,12 +5,15 @@ import dotenv from "dotenv";
 
 import authRoutes from "./routes/authRoutes.js";
 
-// Si alguna de estas rutas aún no existe, déjalas COMENTADAS.
 import medicamentoRoutes from "./routes/medicamentoRoutes.js";
 import categoriaRoutes from "./routes/categoriaRoutes.js";
 import proveedorRoutes from "./routes/proveedorRoutes.js";
 import movimientoRoutes from "./routes/movimientoRoutes.js";
-import reporteRoutes from "./routes/reporteRoutes.js";  
+import reporteRoutes from "./routes/reporteRoutes.js";
+import usuarioRoutes from "./routes/usuarioRoutes.js";
+
+import { requireAuth } from "./middlewares/authMiddleware.js";
+import { requirePerm } from "./middlewares/permMiddleware.js";
 
 dotenv.config();
 
@@ -20,7 +23,11 @@ const app = express();
 app.use(express.json());
 app.use(
   cors({
-    origin: ["http://localhost:3000","https://familycare-logistic-front.onrender.com", "http://127.0.0.1:3000"],
+    origin: [
+      "http://localhost:3000",
+      "https://familycare-logistic-front.onrender.com",
+      "http://127.0.0.1:3000",
+    ],
     credentials: true,
   })
 );
@@ -30,14 +37,22 @@ app.get("/api/health", (_req, res) => {
   res.json({ ok: true, service: "familycare-api", ts: Date.now() });
 });
 
-// Rutas
+// Rutas públicas
 app.use("/api/auth", authRoutes);
 
-// ⚠️ Si todavía no tienes estas rutas listas, comenta estas 4 líneas:
-app.use("/api/medicamentos", medicamentoRoutes);
-app.use("/api/categorias", categoriaRoutes);
-app.use("/api/proveedores", proveedorRoutes);
-app.use("/api/movimientos", movimientoRoutes);
-app.use("/api/reportes", reporteRoutes);     
-// 👇 ESTA LÍNEA ES CLAVE para resolver tu error
+// Rutas protegidas
+app.use("/api/medicamentos", requireAuth, medicamentoRoutes);
+app.use("/api/categorias", requireAuth, categoriaRoutes);
+app.use("/api/proveedores", requireAuth, proveedorRoutes);
+app.use("/api/movimientos", requireAuth, movimientoRoutes);
+app.use("/api/reportes", requireAuth, reporteRoutes);
+
+// 👉 Usuarios (solo quien tenga perm_usuarios)
+app.use(
+  "/api/usuarios",
+  requireAuth,
+  requirePerm("perm_usuarios"),
+  usuarioRoutes
+);
+
 export default app;

@@ -2,7 +2,7 @@ import sequelize from "../config/db.js";
 import { Op } from "sequelize";
 import Medicamento from "../models/Medicamento.js";
 import MovimientoStock from "../models/MovimientoStock.js";
-import Lote from "../models/Lote.js"; // Asegúrate de importar Lote también
+import Lote from "../models/Lote.js";
 
 /**
  * Normaliza una fecha en formato YYYY-MM-DD a Date, o null si viene vacía.
@@ -12,14 +12,13 @@ function toDateOrNull(value) {
   try {
     const d = new Date(value);
     // Asegurarse de que la fecha es válida y no sea "0000-00-00 00:00:00"
-    return Number.isNaN(d.getTime()) || value === "0000-00-00 00:00:00" ? null : d;
+    return Number.isNaN(d.getTime()) || value === "0000-00-00 00:00:00"
+      ? null
+      : d;
   } catch {
     return null;
   }
 }
-
-
-
 
 /**
  * Busca (o crea) un lote por combinación:
@@ -58,13 +57,13 @@ export const crearMovimiento = async (req, res) => {
   try {
     const {
       medicamento_id,
-      codigo_barras,   // 👈 NUEVO: para usar el lector de código de barras
+      codigo_barras, // para usar el lector de código de barras
       tipo,
       cantidad,
       motivo,
       documento_ref,
-      lote,       // código del lote (opcional)
-      caducidad,  // YYYY-MM-DD (opcional)
+      lote, // código del lote (opcional)
+      caducidad, // YYYY-MM-DD (opcional)
     } = req.body;
 
     if (!["entrada", "salida"].includes(tipo)) {
@@ -101,9 +100,9 @@ export const crearMovimiento = async (req, res) => {
         .json({ error: "Medicamento no encontrado (id o código de barras)" });
     }
 
-    // ENTRADA
+    // ========== ENTRADA ==========
     if (tipo === "entrada") {
-      const cadDate = toDateOrNull(caducidad); // Aquí se valida la fecha
+      const cadDate = toDateOrNull(caducidad);
       const loteRow = await findOrCreateLote(
         { medicamentoId: med.id, codigo: lote, caducidad: cadDate },
         t
@@ -146,7 +145,10 @@ export const crearMovimiento = async (req, res) => {
       });
     }
 
-    // SALIDA
+    // ========== SALIDA ==========
+
+    // ⚠️ Aquí permitimos que el stock quede en 0 pero NUNCA en negativo.
+    // Si tienes 1 y sacas 1, es válido. Si intentas sacar 2, marca error.
     if ((med.stock ?? 0) < cantN) {
       await t.rollback();
       return res
@@ -155,12 +157,12 @@ export const crearMovimiento = async (req, res) => {
     }
 
     let restante = cantN;
-    let movimientosDetalle = [];
-    let lotesAfectados = [];
+    const movimientosDetalle = [];
+    const lotesAfectados = [];
 
+    // ---- Salida de un lote específico (cuando viene 'lote' en el body) ----
     if (lote) {
-      // Salida de un lote específico
-      const cadDate = toDateOrNull(caducidad); // Aquí se valida la fecha
+      const cadDate = toDateOrNull(caducidad);
       const loteRow = await Lote.findOne({
         where: {
           medicamento_id: med.id,
@@ -184,11 +186,11 @@ export const crearMovimiento = async (req, res) => {
       }
 
       await loteRow.update(
-        { stock: loteRow.stock - restante },
+        { stock: (loteRow.stock ?? 0) - restante },
         { transaction: t }
       );
       await med.update(
-        { stock: med.stock - restante },
+        { stock: (med.stock ?? 0) - restante },
         { transaction: t }
       );
 
@@ -221,7 +223,7 @@ export const crearMovimiento = async (req, res) => {
       });
     }
 
-    // FEFO: consumir del lote con caducidad más próxima
+    // ---- FEFO: consumir del lote con caducidad más próxima ----
     const lotes = await Lote.findAll({
       where: { medicamento_id: med.id },
       order: [
@@ -232,6 +234,37 @@ export const crearMovimiento = async (req, res) => {
       transaction: t,
     });
 
+    // Si NO hay lotes (datos viejos), hacemos salida directa del medicamento.
+    if (!lotes.length) {
+      await med.update(
+        { stock: (med.stock ?? 0) - cantN },
+        { transaction: t }
+      );
+
+      const mov = await MovimientoStock.create(
+        {
+          medicamento_id: med.id,
+          tipo: "salida",
+          cantidad: cantN,
+          motivo: motivo || "venta",
+          documento_ref: documento_ref || null,
+          lote_id: null, // sin lote
+        },
+        { transaction: t }
+      );
+
+      movimientosDetalle.push(mov);
+
+      await t.commit();
+      return res.status(201).json({
+        ok: true,
+        movimientos: movimientosDetalle,
+        medicamento: { id: med.id, nombre: med.nombre, stock: med.stock },
+        lotes: [], // no hubo lotes
+      });
+    }
+
+    // Hay lotes: aplicamos FEFO
     for (const l of lotes) {
       if (restante <= 0) break;
       const disp = l.stock ?? 0;
@@ -268,11 +301,38 @@ export const crearMovimiento = async (req, res) => {
       restante -= toTake;
     }
 
+    // 🔁 Fallback para datos viejos:
+    // si después de consumir lotes todavía falta algo (restante > 0),
+    // lo descontamos directamente del medicamento SIN lote.
     if (restante > 0) {
-      await t.rollback();
-      return res
-        .status(500)
-        .json({ error: "No se pudo completar la salida" });
+      const medRefrescado = await med.reload({ transaction: t });
+
+      if ((medRefrescado.stock ?? 0) < restante) {
+        await t.rollback();
+        return res
+          .status(500)
+          .json({ error: "Stock inconsistente, no se pudo completar la salida" });
+      }
+
+      await medRefrescado.update(
+        { stock: (medRefrescado.stock ?? 0) - restante },
+        { transaction: t }
+      );
+
+      const movExtra = await MovimientoStock.create(
+        {
+          medicamento_id: med.id,
+          tipo: "salida",
+          cantidad: restante,
+          motivo: motivo || "venta",
+          documento_ref: documento_ref || null,
+          lote_id: null,
+        },
+        { transaction: t }
+      );
+
+      movimientosDetalle.push(movExtra);
+      restante = 0;
     }
 
     await t.commit();
@@ -297,15 +357,26 @@ export const crearMovimiento = async (req, res) => {
 export const registrarEntradaConCaducidad = async (req, res) => {
   const t = await sequelize.transaction();
   try {
-    const { medicamentoId, cantidad, lote, caducidad, motivo, documento_ref } = req.body;
+    const {
+      medicamentoId,
+      cantidad,
+      lote,
+      caducidad,
+      motivo,
+      documento_ref,
+    } = req.body;
 
     const cantN = Number(cantidad);
     if (!Number.isInteger(cantN) || cantN <= 0) {
       await t.rollback();
-      return res.status(400).json({ error: "cantidad debe ser entero positivo" });
+      return res
+        .status(400)
+        .json({ error: "cantidad debe ser entero positivo" });
     }
 
-    const med = await Medicamento.findByPk(medicamentoId, { transaction: t });
+    const med = await Medicamento.findByPk(medicamentoId, {
+      transaction: t,
+    });
     if (!med) {
       await t.rollback();
       return res.status(404).json({ error: "Medicamento no encontrado" });
@@ -317,8 +388,14 @@ export const registrarEntradaConCaducidad = async (req, res) => {
       t
     );
 
-    await loteRow.update({ stock: (loteRow.stock ?? 0) + cantN }, { transaction: t });
-    await med.update({ stock: (med.stock ?? 0) + cantN }, { transaction: t });
+    await loteRow.update(
+      { stock: (loteRow.stock ?? 0) + cantN },
+      { transaction: t }
+    );
+    await med.update(
+      { stock: (med.stock ?? 0) + cantN },
+      { transaction: t }
+    );
 
     const mov = await MovimientoStock.create(
       {
@@ -353,11 +430,7 @@ export const registrarEntradaConCaducidad = async (req, res) => {
   }
 };
 
-// al inicio del archivo ya debes tener:
-// import { Op } from "sequelize";
-// import MovimientoStock from "../models/MovimientoStock.js";
-// import Medicamento from "../models/Medicamento.js";
-// import Lote from "../models/Lote.js";
+// ====================== LISTADO DE MOVIMIENTOS ======================
 
 function normalizarTipo(tipoRaw) {
   if (!tipoRaw) return null;
@@ -407,13 +480,13 @@ export const listarMovimientos = async (req, res) => {
 
     const where = {};
 
-    // 🔹 Tipo de movimiento (entrada / salida / todos)
+    // Tipo de movimiento (entrada / salida / todos)
     const tipo = normalizarTipo(tipoRaw);
     if (tipo) {
       where.tipo = tipo; // "entrada" o "salida"
     }
 
-    // 🔹 Filtro por rango de fechas en created_at
+    // Filtro por rango de fechas en created_at
     const fechaDesde = parseFecha(desde, false);
     const fechaHasta = parseFecha(hasta, true);
 
@@ -434,7 +507,7 @@ export const listarMovimientos = async (req, res) => {
         {
           model: Lote,
           as: "lote",
-          attributes: ["id", "codigo", "caducidad"], // 👈 OJO: ya NO pedimos stock_lote
+          attributes: ["id", "codigo", "caducidad"],
         },
       ],
       order: [["created_at", "DESC"]],

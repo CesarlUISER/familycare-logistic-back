@@ -1,33 +1,41 @@
-import Medicamento from '../models/Medicamento.js';
-import { Op } from 'sequelize';
-import Categoria from '../models/Categoria.js';
+// backend/src/controllers/medicamentoController.js
+import { Op } from "sequelize";
+import sequelize from "../config/db.js";
+
+import Medicamento from "../models/Medicamento.js";
+import Categoria from "../models/Categoria.js";
+import MovimientoStock from "../models/MovimientoStock.js";
+import Lote from "../models/Lote.js";
 
 /**
  * GET /api/medicamentos/by-barcode/:code
- * Busca un medicamento por su código de barras (codigo_barras)
  */
 export const obtenerPorCodigoBarras = async (req, res) => {
   try {
     const { code } = req.params;
-    if (!code) return res.status(400).json({ message: "Falta parámetro 'code'" });
+    if (!code)
+      return res.status(400).json({ message: "Falta parámetro 'code'" });
 
     const item = await Medicamento.findOne({
       where: { codigo_barras: String(code).trim() },
-      include: [{ model: Categoria, as: 'categoria', attributes: ['id', 'nombre'] }],
+      include: [
+        { model: Categoria, as: "categoria", attributes: ["id", "nombre"] },
+      ],
     });
 
-    if (!item) return res.status(404).json({ message: 'Medicamento no encontrado' });
+    if (!item)
+      return res.status(404).json({ message: "Medicamento no encontrado" });
     return res.json(item);
   } catch (error) {
-    console.error('❌ Error al buscar por código de barras:', error);
-    return res.status(500).json({ message: 'Error al buscar medicamento' });
+    console.error("❌ Error al buscar por código de barras:", error);
+    return res.status(500).json({ message: "Error al buscar medicamento" });
   }
 };
 
 // GET /api/medicamentos/alertas/listado?dias=30&stock=20
 export const alertasMedicamentos = async (req, res) => {
   try {
-    const dias = Number(req.query.dias ?? 30);   // vence en <= N días
+    const dias = Number(req.query.dias ?? 30);
     const stockMin = Number(req.query.stock ?? 20);
 
     const hoy = new Date();
@@ -36,45 +44,52 @@ export const alertasMedicamentos = async (req, res) => {
 
     const porCaducar = await Medicamento.findAll({
       where: { fecha_caducidad: { [Op.lte]: limite } },
-      order: [['fecha_caducidad', 'ASC']]
+      order: [["fecha_caducidad", "ASC"]],
     });
 
     const stockBajo = await Medicamento.findAll({
       where: { stock: { [Op.lte]: stockMin } },
-      order: [['stock', 'ASC']]
+      order: [["stock", "ASC"]],
     });
 
     res.json({ por_caducar: porCaducar, stock_bajo: stockBajo });
   } catch (error) {
-    console.error('❌ Error en alertas:', error);
-    res.status(500).json({ error: 'Error al obtener alertas' });
+    console.error("❌ Error en alertas:", error);
+    res.status(500).json({ error: "Error al obtener alertas" });
   }
 };
 
-// GET /api/medicamentos?q=texto&page=1&limit=10&sort=nombre&order=ASC&min_stock=0&max_stock=9999
+// GET /api/medicamentos
 export const obtenerMedicamentos = async (req, res) => {
   try {
-    const q     = (req.query.q ?? "").trim();
-    const page  = Number(req.query.page ?? 1);
+    const q = (req.query.q ?? "").trim();
+    const page = Number(req.query.page ?? 1);
     const limit = Number(req.query.limit ?? 10);
-    const sort  = String(req.query.sort ?? "id");
-    const order = String(req.query.order ?? "ASC").toUpperCase() === "DESC" ? "DESC" : "ASC";
+    const sort = String(req.query.sort ?? "id");
+    const order =
+      String(req.query.order ?? "ASC").toUpperCase() === "DESC"
+        ? "DESC"
+        : "ASC";
 
     const offset = (page - 1) * limit;
 
-    // Filtros dinámicos
     const where = {};
     if (q) {
       where[Op.or] = [
-        { nombre:      { [Op.like]: `%${q}%` } },
+        { nombre: { [Op.like]: `%${q}%` } },
         { descripcion: { [Op.like]: `%${q}%` } },
-        { codigo_barras: { [Op.like]: `%${q}%` } }, // búsqueda por código también
+        { codigo_barras: { [Op.like]: `%${q}%` } },
       ];
     }
-    if (req.query.min_stock !== undefined || req.query.max_stock !== undefined) {
+    if (
+      req.query.min_stock !== undefined ||
+      req.query.max_stock !== undefined
+    ) {
       where.stock = {};
-      if (req.query.min_stock !== undefined) where.stock[Op.gte] = Number(req.query.min_stock);
-      if (req.query.max_stock !== undefined) where.stock[Op.lte] = Number(req.query.max_stock);
+      if (req.query.min_stock !== undefined)
+        where.stock[Op.gte] = Number(req.query.min_stock);
+      if (req.query.max_stock !== undefined)
+        where.stock[Op.lte] = Number(req.query.max_stock);
     }
 
     const { rows, count } = await Medicamento.findAndCountAll({
@@ -83,7 +98,7 @@ export const obtenerMedicamentos = async (req, res) => {
       offset,
       order: [[sort, order]],
       include: [
-        { model: Categoria, as: 'categoria', attributes: ['id', 'nombre'] },
+        { model: Categoria, as: "categoria", attributes: ["id", "nombre"] },
       ],
     });
 
@@ -95,31 +110,33 @@ export const obtenerMedicamentos = async (req, res) => {
       data: rows,
     });
   } catch (error) {
-    console.error('❌ Error al obtener medicamentos (paginado):', error);
-    res.status(500).json({ error: 'Error al obtener los medicamentos' });
+    console.error("❌ Error al obtener medicamentos (paginado):", error);
+    res.status(500).json({ error: "Error al obtener los medicamentos" });
   }
 };
 
-// Obtener un medicamento por ID
+// GET /api/medicamentos/:id
 export const obtenerMedicamentoPorId = async (req, res) => {
   try {
     const { id } = req.params;
     const medicamento = await Medicamento.findByPk(id, {
-      include: [{ model: Categoria, as: 'categoria', attributes: ['id', 'nombre'] }],
+      include: [
+        { model: Categoria, as: "categoria", attributes: ["id", "nombre"] },
+      ],
     });
 
     if (!medicamento) {
-      return res.status(404).json({ error: 'Medicamento no encontrado' });
+      return res.status(404).json({ error: "Medicamento no encontrado" });
     }
 
     res.json(medicamento);
   } catch (error) {
-    console.error('❌ Error al obtener medicamento por ID:', error);
-    res.status(500).json({ error: 'Error al obtener el medicamento' });
+    console.error("❌ Error al obtener medicamento por ID:", error);
+    res.status(500).json({ error: "Error al obtener el medicamento" });
   }
 };
 
-// Crear un nuevo medicamento
+// POST /api/medicamentos
 export const crearMedicamento = async (req, res) => {
   try {
     const {
@@ -129,43 +146,46 @@ export const crearMedicamento = async (req, res) => {
       stock,
       fecha_caducidad,
       categoria_id,
-      codigo_barras, // 👈 viene del formulario de “nuevo medicamento”
+      codigo_barras,
     } = req.body;
 
-    // Validación básica
-    if (!nombre) {
-      return res.status(400).json({ error: "El nombre es obligatorio" });
+    if (!nombre || !precio) {
+      return res.status(400).json({
+        error: "Nombre y precio son obligatorios",
+      });
     }
 
-    const nuevoMedicamento = await Medicamento.create({
-      nombre,
-      descripcion: descripcion || null,
-      precio: precio ?? 0,               // si no mandas precio, lo dejamos en 0
-      stock: stock ?? 0,                 // stock inicial 0, la entrada lo incrementa
-      fecha_caducidad: fecha_caducidad || null,
+    const payload = {
+      nombre: nombre.trim(),
+      descripcion: descripcion?.trim() || null,
+      precio: Number(precio),
+      stock: Number.isFinite(Number(stock)) ? Number(stock) : 0,
       categoria_id: categoria_id ?? null,
       codigo_barras: codigo_barras?.trim() || null,
-    });
+      // activo: default true
+    };
 
-    // Respondemos con el medicamento creado
-    res.status(201).json(nuevoMedicamento);
+    if (fecha_caducidad) {
+      payload.fecha_caducidad = fecha_caducidad;
+    }
+
+    const nuevoMedicamento = await Medicamento.create(payload);
+
+    return res.status(201).json(nuevoMedicamento);
   } catch (error) {
-    // Manejo de índice único de codigo_barras
     if (error?.name === "SequelizeUniqueConstraintError") {
       return res.status(409).json({ error: "El código de barras ya existe" });
     }
     console.error("❌ Error al crear medicamento:", error);
-    res.status(500).json({ error: "Error al crear el medicamento" });
+    return res.status(500).json({ error: "Error al crear el medicamento" });
   }
 };
 
-
-// Actualizar un medicamento (PUT)
+// PUT /api/medicamentos/:id
 export const actualizarMedicamento = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Si viene codigo_barras, normaliza
     if (req.body?.codigo_barras !== undefined) {
       req.body.codigo_barras = req.body.codigo_barras?.trim() || null;
     }
@@ -174,92 +194,133 @@ export const actualizarMedicamento = async (req, res) => {
 
     if (updated) {
       const medicamentoActualizado = await Medicamento.findByPk(id, {
-        include: [{ model: Categoria, as: 'categoria', attributes: ['id', 'nombre'] }],
+        include: [
+          { model: Categoria, as: "categoria", attributes: ["id", "nombre"] },
+        ],
       });
       res.json(medicamentoActualizado);
     } else {
-      res.status(404).json({ error: 'Medicamento no encontrado' });
+      res.status(404).json({ error: "Medicamento no encontrado" });
     }
   } catch (error) {
-    if (error?.name === 'SequelizeUniqueConstraintError') {
-      return res.status(409).json({ error: 'El código de barras ya existe' });
+    if (error?.name === "SequelizeUniqueConstraintError") {
+      return res.status(409).json({ error: "El código de barras ya existe" });
     }
-    console.error('❌ Error al actualizar medicamento:', error);
-    res.status(500).json({ error: 'Error al actualizar el medicamento' });
+    console.error("❌ Error al actualizar medicamento:", error);
+    res.status(500).json({ error: "Error al actualizar el medicamento" });
   }
 };
 
-// Actualizar parcialmente un medicamento (PATCH)
+// PATCH /api/medicamentos/:id
 export const actualizarMedicamentoParcial = async (req, res) => {
   try {
     const { id } = req.params;
     const medicamento = await Medicamento.findByPk(id);
 
     if (!medicamento) {
-      return res.status(404).json({ error: 'Medicamento no encontrado' });
+      return res.status(404).json({ error: "Medicamento no encontrado" });
     }
 
     if (req.body?.codigo_barras !== undefined) {
       req.body.codigo_barras = req.body.codigo_barras?.trim() || null;
     }
 
-    await medicamento.update(req.body); // solo campos presentes en el body
+    await medicamento.update(req.body);
     res.json(medicamento);
   } catch (error) {
-    if (error?.name === 'SequelizeUniqueConstraintError') {
-      return res.status(409).json({ error: 'El código de barras ya existe' });
+    if (error?.name === "SequelizeUniqueConstraintError") {
+      return res.status(409).json({ error: "El código de barras ya existe" });
     }
-    console.error('❌ Error al actualizar parcialmente el medicamento:', error);
-    res.status(500).json({ error: 'Error al actualizar parcialmente el medicamento' });
+    console.error("❌ Error al actualizar parcialmente el medicamento:", error);
+    res
+      .status(500)
+      .json({ error: "Error al actualizar parcialmente el medicamento" });
   }
 };
 
-// Ajustar stock con delta (positivo suma, negativo resta)
+// PATCH /api/medicamentos/:id/ajustar-stock
 export const ajustarStock = async (req, res) => {
   try {
     const { id } = req.params;
-    const { delta } = req.body; // ej: { "delta": -5 }
+    const { delta } = req.body;
 
-    if (typeof delta !== 'number' || Number.isNaN(delta)) {
+    if (typeof delta !== "number" || Number.isNaN(delta)) {
       return res.status(400).json({ error: "Debe enviar 'delta' numérico" });
     }
 
     const medicamento = await Medicamento.findByPk(id);
     if (!medicamento) {
-      return res.status(404).json({ error: 'Medicamento no encontrado' });
+      return res.status(404).json({ error: "Medicamento no encontrado" });
     }
 
     const nuevoStock = (medicamento.stock ?? 0) + delta;
     if (nuevoStock < 0) {
-      return res.status(400).json({ error: 'Stock insuficiente' });
+      // 👈 permite llegar a 0, solo bloquea negativos
+      return res.status(400).json({ error: "Stock insuficiente" });
     }
 
     await medicamento.update({ stock: nuevoStock });
-    res.json(medicamento); // devuelve el medicamento con el stock ya ajustado
+    res.json(medicamento);
   } catch (error) {
-    console.error('❌ Error al ajustar stock:', error);
-    res.status(500).json({ error: 'Error al ajustar el stock' });
+    console.error("❌ Error al ajustar stock:", error);
+    res.status(500).json({ error: "Error al ajustar el stock" });
   }
 };
 
-// Eliminar un medicamento
+// Eliminar un medicamento (solo si stock = 0)
+// Borra primero movimientos y lotes para respetar las FKs
 export const eliminarMedicamento = async (req, res) => {
+  const t = await sequelize.transaction();
   try {
     const { id } = req.params;
-    const eliminado = await Medicamento.destroy({ where: { id } });
 
-    if (eliminado) {
-      res.json({ mensaje: 'Medicamento eliminado correctamente' });
-    } else {
-      res.status(404).json({ error: 'Medicamento no encontrado' });
+    const med = await Medicamento.findByPk(id, { transaction: t });
+    if (!med) {
+      await t.rollback();
+      return res.status(404).json({ error: "Medicamento no encontrado" });
     }
+
+    // Seguridad: no permitir borrar si aún tiene stock
+    const stockActual = med.stock ?? 0;
+    if (stockActual > 0) {
+      await t.rollback();
+      return res.status(400).json({
+        error:
+          "No se puede eliminar este medicamento porque aún tiene stock. " +
+          "Primero registra las salidas hasta dejarlo en 0.",
+      });
+    }
+
+    // 1) Borrar movimientos de stock relacionados
+    await MovimientoStock.destroy({
+      where: { medicamento_id: id },
+      transaction: t,
+    });
+
+    // 2) Borrar lotes relacionados
+    await Lote.destroy({
+      where: { medicamento_id: id },
+      transaction: t,
+    });
+
+    // 3) Borrar el medicamento
+    await med.destroy({ transaction: t });
+
+    await t.commit();
+    return res.json({
+      ok: true,
+      mensaje: "Medicamento eliminado correctamente",
+    });
   } catch (error) {
-    console.error('❌ Error al eliminar medicamento:', error);
-    res.status(500).json({ error: 'Error al eliminar el medicamento' });
+    await t.rollback();
+    console.error("❌ Error al eliminar medicamento:", error);
+    return res
+      .status(500)
+      .json({ error: "Error al eliminar el medicamento" });
   }
 };
 
-// PATCH /api/medicamentos/:id/barcode  { codigo_barras: "..." }
+// PATCH /api/medicamentos/:id/barcode
 export const actualizarCodigoBarras = async (req, res) => {
   try {
     const { id } = req.params;
@@ -273,29 +334,31 @@ export const actualizarCodigoBarras = async (req, res) => {
     }
 
     const med = await Medicamento.findByPk(id);
-    if (!med) return res.status(404).json({ error: "Medicamento no encontrado" });
+    if (!med)
+      return res.status(404).json({ error: "Medicamento no encontrado" });
 
     med.codigo_barras = codigo_barras.trim();
-    await med.save(); // respetará el UNIQUE si lo tienes
+    await med.save();
 
     res.json({ ok: true, id: med.id, codigo_barras: med.codigo_barras });
   } catch (err) {
-    // si hay duplicado por UNIQUE:
     if (err?.name === "SequelizeUniqueConstraintError") {
-      return res.status(409).json({ error: "Ese código ya está asignado a otro producto" });
+      return res
+        .status(409)
+        .json({ error: "Ese código ya está asignado a otro producto" });
     }
     console.error("❌ Error al actualizar código de barras:", err);
     res.status(500).json({ error: "Error al actualizar código de barras" });
   }
 };
 
-// desactivar un medicamento
-// controlador
+// PATCH /api/medicamentos/:id/reactivar
 export const reactivarMedicamento = async (req, res) => {
   try {
     const { id } = req.params;
     const med = await Medicamento.findByPk(id);
-    if (!med) return res.status(404).json({ error: "Medicamento no encontrado" });
+    if (!med)
+      return res.status(404).json({ error: "Medicamento no encontrado" });
 
     await med.update({ activo: 1 });
     res.json({ ok: true, medicamento: med });

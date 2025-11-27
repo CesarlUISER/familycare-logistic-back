@@ -1,14 +1,14 @@
 import express from "express";
 import {
   reporteMensual,
-  stockActual,
+  inventarioActual,
   expirations
 } from "../controllers/reporteController.js";
 
 const router = express.Router();
 
 // Inventario actual
-router.get("/stock", stockActual);
+router.get("/stock", inventarioActual);
 
 // Próximos a caducar
 router.get("/expirations", expirations);

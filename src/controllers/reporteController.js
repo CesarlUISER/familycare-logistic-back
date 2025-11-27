@@ -4,7 +4,11 @@ import Medicamento from "../models/Medicamento.js";
 import MovimientoStock from "../models/MovimientoStock.js";
 import Lote from "../models/Lote.js";
 
-// Utilidad: rango del mes (YYYY-MM)
+/** =========================
+ *  Helpers
+ *  ========================= */
+
+// Rango de un mes (YYYY-MM)
 function rangoMes(yyyyMm) {
   const [year, month] = String(yyyyMm).split("-").map(Number);
   const inicio = new Date(year, month - 1, 1);
@@ -75,7 +79,7 @@ export const reporteMensual = async (req, res) => {
       }));
     }
 
-    // 4) Próximos a caducar (30 días) - este se usa solo en Reporte mensual
+    // 4) Próximos a caducar en 30 días (solo para el reporte mensual)
     const hoy = new Date();
     const limite = new Date();
     limite.setDate(limite.getDate() + 30);
@@ -106,87 +110,109 @@ export const reporteMensual = async (req, res) => {
 
 /** =========================
  *  INVENTARIO ACTUAL
- *  ========================= */
-export const stockActual = async (req, res) => {
+ *  =========================
+ *  Incluye campo calculado:
+ *  - a_resurtir: cantidad sugerida a resurtir
+ *    basado en consumo de los últimos 14 días
+ *    y cobertura de 14 días hacia adelante.
+ *  Fórmula:
+ *    consumo_14d = SUM(salidas últimos 14 días)
+ *    cpd = consumo_14d / 14
+ *    stockObjetivo = cpd * 14
+ *    a_resurtir = max(0, ceil(stockObjetivo - stockActual))
+ */
+export const inventarioActual = async (req, res) => {
   try {
-    const {
-      q = "",
-      page = 1,
-      limit = 20,
-      sort = "nombre",
-      order = "ASC",
-      min_stock,
-      max_stock,
-    } = req.query;
+    // 1) Traemos todos los medicamentos
+    const meds = await Medicamento.findAll({
+      attributes: ["id", "nombre", "descripcion", "precio", "stock", "activo"],
+      order: [["nombre", "ASC"]],
+    });
 
-    const where = {};
-    if (q) {
-      where[Op.or] = [
-        { nombre: { [Op.like]: `%${q}%` } },
-        { codigo_barras: { [Op.like]: `%${q}%` } },
-      ];
-    }
-    if (min_stock !== undefined || max_stock !== undefined) {
-      where.stock = {};
-      if (min_stock !== undefined) where.stock[Op.gte] = Number(min_stock);
-      if (max_stock !== undefined) where.stock[Op.lte] = Number(max_stock);
-    }
+    // 2) Obtenemos el consumo (salidas) de los últimos 14 días, agrupado por medicamento
+    const hoy = new Date();
+    const hace14 = new Date();
+    hace14.setDate(hoy.getDate() - 14);
 
-    const pageN = Math.max(1, Number(page));
-    const limitN = Math.max(1, Number(limit));
-    const offset = (pageN - 1) * limitN;
-    const sortCol = [
-      "id",
-      "nombre",
-      "stock",
-      "precio",
-      "fecha_caducidad",
-      "codigo_barras",
-    ].includes(sort)
-      ? sort
-      : "nombre";
-    const ord = String(order).toUpperCase() === "DESC" ? "DESC" : "ASC";
-
-    const { rows } = await Medicamento.findAndCountAll({
-      where,
-      limit: limitN,
-      offset,
-      order: [[sortCol, ord]],
+    const consumos = await MovimientoStock.findAll({
       attributes: [
-        "id",
-        "nombre",
-        "descripcion",
-        "codigo_barras",
-        "stock",
-        "precio",
-        "fecha_caducidad",
-        "activo",
+        "medicamento_id",
+        [fn("SUM", col("cantidad")), "consumo_14d"],
       ],
+      where: {
+        tipo: "salida",
+        created_at: { [Op.between]: [hace14, hoy] },
+      },
+      group: ["medicamento_id"],
       raw: true,
     });
 
-    res.json({ data: rows });
-  } catch (e) {
-    console.error("❌ Error en stockActual:", e);
-    res.status(500).json({ error: "Error al obtener el inventario actual" });
+    const mapConsumo = new Map();
+    for (const row of consumos) {
+      mapConsumo.set(
+        row.medicamento_id,
+        Number(row.consumo_14d || 0)
+      );
+    }
+
+    const diasHistorial = 14;
+    const diasCobertura = 14;
+
+    // 3) Calculamos a_resurtir por cada medicamento
+    const medsConCalculo = meds.map((m) => {
+      const stockActual = m.stock ?? 0;
+      const consumoVentana = mapConsumo.get(m.id) ?? 0;
+
+      const cpd =
+        diasHistorial > 0 ? consumoVentana / diasHistorial : 0; // consumo promedio diario
+      const stockObjetivo = cpd * diasCobertura;
+
+      let aResurtir = 0;
+      if (stockObjetivo > 0) {
+        const diff = stockObjetivo - stockActual;
+        aResurtir = diff > 0 ? Math.ceil(diff) : 0;
+      }
+
+      // Campo virtual que se incluirá en el JSON
+      m.setDataValue("a_resurtir", aResurtir);
+
+      return m;
+    });
+
+    // 4) Totales
+    const items = medsConCalculo.length;
+    const units = medsConCalculo.reduce(
+      (acc, m) => acc + (m.stock ?? 0),
+      0
+    );
+    const value = medsConCalculo.reduce(
+      (acc, m) => acc + (m.stock ?? 0) * Number(m.precio ?? 0),
+      0
+    );
+
+    return res.json({
+      ok: true,
+      items,
+      units,
+      value,
+      data: medsConCalculo,
+    });
+  } catch (err) {
+    console.error("❌ Error en inventarioActual:", err);
+    return res
+      .status(500)
+      .json({ ok: false, error: "Error al obtener el inventario actual" });
   }
 };
 
 /** =========================
- *  CADUCIDADES (pantalla aparte)
- *  =========================
- *  - Toma LOTES con caducidad futura y stock > 0
- *  - Además, toma MEDICAMENTOS que tengan fecha_caducidad y stock > 0
- *    y que no tengan lotes (datos antiguos).
- */
+ *  PRÓXIMOS A CADUCAR (para pantalla de caducidades)
+ *  ========================= */
 export const expirations = async (req, res) => {
   try {
-    const hoy = new Date();
-
-    // 1) Lotes con caducidad futura y stock > 0
+    // 1) LOTES con stock > 0 (no filtramos por fecha aquí)
     const lotes = await Lote.findAll({
       where: {
-        caducidad: { [Op.gte]: hoy },
         stock: { [Op.gt]: 0 },
       },
       include: [
@@ -211,12 +237,11 @@ export const expirations = async (req, res) => {
       stock: l.stock || 0,
     }));
 
-    // 2) Medicamentos con fecha_caducidad y stock>0 pero sin lotes (datos viejos)
+    // 2) MEDICAMENTOS sin lotes (datos viejos o sin control por lote)
     const idsConLote = new Set(lotes.map((l) => l.medicamento_id));
 
     const meds = await Medicamento.findAll({
       where: {
-        fecha_caducidad: { [Op.gte]: hoy },
         stock: { [Op.gt]: 0 },
       },
       attributes: ["id", "nombre", "codigo_barras", "fecha_caducidad", "stock"],
@@ -224,7 +249,7 @@ export const expirations = async (req, res) => {
     });
 
     const fromMeds = meds
-      .filter((m) => !idsConLote.has(m.id))
+      .filter((m) => !idsConLote.has(m.id) && m.fecha_caducidad)
       .map((m) => ({
         medicamento_id: m.id,
         medicamento_nombre: m.nombre,
@@ -234,17 +259,14 @@ export const expirations = async (req, res) => {
         stock: m.stock || 0,
       }));
 
-    // 3) Unimos y ordenamos por fecha de caducidad
-    const data = [...fromLotes, ...fromMeds].sort((a, b) => {
-      const da = a.fecha_caducidad ? new Date(a.fecha_caducidad).getTime() : 0;
-      const db = b.fecha_caducidad ? new Date(b.fecha_caducidad).getTime() : 0;
-      return da - db;
-    });
+    const data = [...fromLotes, ...fromMeds].sort(
+      (a, b) => new Date(a.fecha_caducidad) - new Date(b.fecha_caducidad)
+    );
 
-    return res.json({ ok: true, data });
+    res.json({ ok: true, data });
   } catch (e) {
     console.error("❌ Error en expirations:", e);
-    return res
+    res
       .status(500)
       .json({ ok: false, error: "Error al obtener próximos a caducar" });
   }
